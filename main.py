@@ -1,291 +1,188 @@
-import sys, copy, random, argparse, os
+# NOTE: do not modify this file
+from __future__ import absolute_import, division, print_function
+import argparse
+from game import Game, WHITE, BLACK, EMPTY, GRID_COUNT
+from test import deterministic_test, win_test
+from ai import AI
 
-from game import Game, cards, HIT, STAND, WIN_STATE, LOSE_STATE
-from ai import Agent
+gen_tests = False
 
-from test import *
+GRID_SIZE = 46
+RADIUS = GRID_SIZE // 2
+BOARD_START_X = 38
+BOARD_START_Y = 55
+EDGE_SIZE = GRID_SIZE//2
+TEXT_POS = (10, 8)
 
-BLACK = (0,0,0)
-WHITE = (255,255,255)
-BLUE = (0,0,139)
-GREEN = (0x44,0xff,0x44)
-RED = (0xff, 0x44, 0x44)
+HELP_TEXT = "{0} Click to place piece. Press Enter for rand/AI play and [m] for user/{1} play."
 
-PADDING = 5
+WHITE_COLOR = [255]*3
+BLACK_COLOR = [0]*3
 
-GAME_OVER_TEXT_POS = (240, 20)
+BORDER_COLOR = [0] * 3
 
-OPS_BTN_Y = 430
-OPS_TXT_Y = OPS_BTN_Y + 3
+BOARD_COLOR = [153,118,103]
 
-OPS_INSTR_X = 10
-OPS_INSTR_Y = 460
+TEXT_COLOR = [0] * 3
+INACTIVE_COLOR = [70]*3
+ACTIVE_COLOR = [0]*3
 
-OPS_BTN_HEIGHT = 23
-
-USR_CARD_HEIGHT = 275
-
-class GameRunner:
+class Gomoku():
     def __init__(self):
-        self.game = Game()
-        self.agent = Agent()
-
-        self.autoMC = False
-        self.autoTD = False
-        self.autoQL = False
-        self.autoPlay = False
-
-        card_path = 'resources/cards/'
-        self.card_imgs = {}
-        for (rank, suit) in cards:
-            self.card_imgs[(rank, suit)] = pygame.image.load(os.path.join(card_path, f"{rank}_{suit}.png"))
-        self.cBack = pygame.image.load('resources/cardback.png')
-
-        self.init_display()
-        self.render_board()
-        
-
-    def init_display(self):
-        #Initialize Game
         pygame.init()
-        self.screen = pygame.display.set_mode((640, 480))
-        pygame.display.set_caption('Blackjack')
-        self.font = pygame.font.SysFont("arial", 15)
-        
-        self.hitTxt = self.font.render('[H]it', 1, BLACK)
-        self.standTxt = self.font.render('[S]tand', 1, BLACK)
+        self.screen = pygame.display.set_mode((530, 550))
+        pygame.display.set_caption("Gomoku")
+        self.clock = pygame.time.Clock()
+        self.font = pygame.font.SysFont("ariel",18)
 
-        modes = ["off", "on"]
-        self.MCTxt = [self.font.render('[M]C - ' + mode, 1, BLUE) for mode in modes]
-        self.TDTxt = [self.font.render('[T]D - ' + mode, 1, BLUE) for mode in modes]
-        self.QLTxt = [self.font.render('[Q]L - ' + mode, 1, BLUE) for mode in modes]
-        self.playTxt = [self.font.render('[A]uto Play - ' + mode, 1, BLUE) for mode in modes]
-        self.gameoverTxt = [self.font.render('End of Round. You WON!', 1, RED), self.font.render('End of Round. You LOST!', 1, RED)]
+        self.going = True
+        self.game = Game(BLACK) # Initialize with 'b' since the first player to go is BLACK
+        self.auto = False
+        self.semiauto = True
+        self.ai_play = False
 
-        self.ops_instr = self.font.render('Click on the button or type the initial character of the operation to play or toggle modes', 1, BLACK)
-        self.save_instr = self.font.render('Press 1 to save AI state', 1, BLACK)
-        self.load_instr = self.font.render('Press 2 to load from AI\'s saved state', 1, BLACK)
-
-        self.background = pygame.Surface(self.screen.get_size())
-        self.background = self.background.convert()
-        self.background.fill((0x00, 0x62, 0xbe))
-        self.hitB = pygame.draw.rect(self.background, WHITE, (10, OPS_BTN_Y, 75, OPS_BTN_HEIGHT))
-        self.standB = pygame.draw.rect(self.background, WHITE, (95, OPS_BTN_Y, 75, OPS_BTN_HEIGHT))
-
-        
     def loop(self):
-        while True:
-            # Our state information does not take into account of number of cards
-            
-            if self.autoMC:
-                #MC Learning
-                #Compute the values of all states under the default policy (see ai.py)
-                self.agent.MC_run(50)
-            if self.autoTD:
-                #TD Learning
-                #Compute the values of all states under the default policy (see ai.py)
-                self.agent.TD_run(50)
-            if self.autoQL:
-                #Q-Learning
-                #For each state, compute the Q value of the action "Hit" and "Stand"
-                self.agent.Q_run(50)
-            
-            if self.autoPlay:
-                if self.game.game_over() or self.game.stand:
-                    self.game.update_stats()
-                    self.game.reset()
+        while self.going:
+            self.update()
+            self.draw()
+            self.clock.tick(60)
+        pygame.quit()
 
-                decision = self.agent.autoplay_decision(copy.deepcopy(self.game.state))
-                if decision == 0:
-                    self.game.act_hit()
-                else:
-                    self.game.act_stand()
-                
-            self.handle_user_action()
-            self.render_board()
-            
-    def check_act_MC(self, event):
-        clicked = event.type == MOUSEBUTTONDOWN and self.MCB.collidepoint(pygame.mouse.get_pos())
-        pressed = event.type == KEYDOWN and event.key == K_m
-        return clicked or pressed
+    def save_prob_arr(self, dictionary, filename="savedata_actions"):
+        f = open(filename, "w")
+        for key in dictionary:
+            line = " ".join([str(key[0]), str(key[1]), str(dictionary[key])])
+            f.write(line + "\n")
+        f.close()
 
-    def check_act_TD(self, event):
-        clicked = event.type == MOUSEBUTTONDOWN and self.TDB.collidepoint(pygame.mouse.get_pos())
-        pressed = event.type == KEYDOWN and event.key == K_t
-        return clicked or pressed
-
-    def check_act_QL(self, event):
-        clicked = event.type == MOUSEBUTTONDOWN and self.QLB.collidepoint(pygame.mouse.get_pos())
-        pressed = event.type == KEYDOWN and event.key == K_q
-        return clicked or pressed
-    
-    def check_act_autoplay(self, event):
-        clicked = event.type == MOUSEBUTTONDOWN and self.playB.collidepoint(pygame.mouse.get_pos())
-        pressed = event.type == KEYDOWN and event.key == K_a
-        return clicked or pressed
-
-    def check_act_hit(self, event):
-        clicked = event.type == MOUSEBUTTONDOWN and self.hitB.collidepoint(pygame.mouse.get_pos())
-        pressed = event.type == KEYDOWN and event.key == K_h
-
-        return not self.game.game_over() and not self.autoPlay and (clicked or pressed)
-
-    def check_act_stand(self, event):
-        clicked = event.type == MOUSEBUTTONDOWN and self.standB.collidepoint(pygame.mouse.get_pos())
-        pressed = event.type == KEYDOWN and event.key == K_s
-
-        return not self.game.game_over() and not self.autoPlay and (clicked or pressed)
-
-    def check_reset(self, event):
-        clicked = event.type == MOUSEBUTTONDOWN
-        pressed = event.type == KEYDOWN
-
-        return self.game.game_over() and not self.autoPlay and (clicked or pressed)
-    
-    def handle_user_action(self):
-        for event in pygame.event.get():
-            if event.type == QUIT:
-                pygame.quit()
-                sys.exit()
-
-            # Clicking the white buttons can start or pause the learning processes
-            elif self.check_act_MC(event):
-                self.autoMC = not self.autoMC
-            elif self.check_act_TD(event):
-                self.autoTD = not self.autoTD
-            elif self.check_act_QL(event):
-                self.autoQL = not self.autoQL
-            elif self.check_act_autoplay(event):
-                self.autoPlay = not self.autoPlay
-            
-            elif self.check_act_hit(event):
-                self.game.act_hit()
-                
-            elif self.check_act_stand(event):
-                self.game.act_stand()
-
-            elif self.check_reset(event):
-                self.game.update_stats()
-                self.game.reset()
-            
-            if event.type == KEYDOWN:
-                if event.key == K_x:
-                    pygame.quit()
-                    sys.exit()
-                if event.key == K_1:
-                    self.agent.save("saved")
-                elif event.key == K_2:
-                    self.agent.load("saved")
-    
-    @staticmethod
-    def draw_label_hl(surface, pos, label, padding=PADDING, bg=WHITE, wd=2, border=True):
-        specs = [(bg, 0)]
-        if border:
-            specs += [(BLACK, wd)]
-        for color, width in specs:
-            x = pos[0] - padding
-            y = pos[1] - padding
-            w = label.get_width() + padding * 2
-            h = label.get_height() + padding * 2
-            pygame.draw.rect(surface, color, (x, y, w, h), width)
-
-    def render_board(self):
-        winTxt = self.font.render('Wins: {}'.format(self.game.winNum), 1, WHITE)
-        loseTxt = self.font.render('Losses: {}'.format(self.game.loseNum), 1, WHITE)
-        if self.game.loseNum == 0 and self.game.winNum == 0:
-            win_rate = 0.
+    def update(self):
+        if self.ai_play:
+            if not self.game.game_over:
+                ai_player = AI(self.game.state())
+                (r,c), win_rates = ai_player.mcts_search()
+                if gen_tests:
+                    self.game.save_state()
+                    self.save_prob_arr(win_rates)
+                self.game.place(r, c)
+            self.ai_play = False
         else:
-            win_rate = self.game.winNum / (self.game.winNum + self.game.loseNum)
-        win_rate_txt = self.font.render('Win rate: {:.2f}%'.format(win_rate * 100), 1, WHITE)
-            
-        button_colors = [RED, GREEN]
-        self.MCB = pygame.draw.rect(self.background, button_colors[self.autoMC], (180, OPS_BTN_Y, 75, OPS_BTN_HEIGHT))
-        self.TDB = pygame.draw.rect(self.background, button_colors[self.autoTD], (265, OPS_BTN_Y, 75, OPS_BTN_HEIGHT))
-        self.QLB = pygame.draw.rect(self.background, button_colors[self.autoQL], (350, OPS_BTN_Y, 75, OPS_BTN_HEIGHT))
-        self.playB = pygame.draw.rect(self.background, button_colors[self.autoPlay], (435, OPS_BTN_Y, 115, OPS_BTN_HEIGHT))
+            for e in pygame.event.get():
+                if e.type == QUIT:
+                    self.going = False
+                if e.type == MOUSEBUTTONDOWN:
+                    self.auto = False
+                    if self.semiauto:
+                        if self.handle_key_event(e):
+                            self.ai_play = True
+                    else:
+                        self.handle_key_event(e)
+                if e.type == KEYDOWN:
+                    if e.key == K_s:
+                        self.game.save_state()
+                    if e.key == K_l:
+                        self.game.load_state()
+                    if e.key == K_RETURN:
+                        self.auto = not self.auto
+                    if e.key == K_SPACE:
+                        self.auto = False
+                        self.game.reset()
+                    if e.key == K_m:
+                        self.semiauto = not self.semiauto
+            if self.auto:
+                if not self.game.game_over:
+                    r, c = self.game.rand_move()
+                    self.game.place(r, c)
+                    self.ai_play = True
 
+    def draw(self):
+        self.screen.fill((255, 255, 255))
 
-        state_info = self.font.render('State (user_sum, user_has_Ace, dealer_first) ={}'.format(self.game.state), 1, BLACK)
-        MCU = self.font.render('Current state\'s (MC value, #samples): ({:f}, {})'.format(
-            self.agent.MC_values[self.game.state], 
-            self.agent.N_MC[self.game.state]
-        ), 1, BLACK)
+        pygame.draw.rect(self.screen, BOARD_COLOR,
+                         [BOARD_START_X - EDGE_SIZE, BOARD_START_Y - EDGE_SIZE,
+                          (GRID_COUNT - 1) * GRID_SIZE + EDGE_SIZE * 2,
+                          (GRID_COUNT - 1) * GRID_SIZE + EDGE_SIZE * 2], 0)
+        # draw horizontal line
+        for r in range(GRID_COUNT):
+            y = BOARD_START_Y + r * GRID_SIZE
+            pygame.draw.line(self.screen, INACTIVE_COLOR, [BOARD_START_X, y],
+                             [BOARD_START_X + GRID_SIZE * (GRID_COUNT - 1), y], 2)
 
-        TDU = self.font.render('Current state\'s (TD value, #samples): ({:f}, {})'.format(
-            self.agent.TD_values[self.game.state], 
-            self.agent.N_TD[self.game.state]
-        ), 1, BLACK)
+            if r in range(self.game.min_r, self.game.max_r + 1):
+                x_start = BOARD_START_X + self.game.min_c * GRID_SIZE
+                x_end = BOARD_START_X + self.game.max_c * GRID_SIZE
+                pygame.draw.line(self.screen, ACTIVE_COLOR, [x_start, y],
+                                 [x_end, y], 2)
+        # draw vertical line
+        for c in range(GRID_COUNT):
+            x = BOARD_START_X + c * GRID_SIZE
+            pygame.draw.line(self.screen, INACTIVE_COLOR, [x, BOARD_START_Y],
+                             [x, BOARD_START_Y + GRID_SIZE * (GRID_COUNT - 1)], 2)
+            if c in range(self.game.min_c, self.game.max_c + 1):
+                y_start = BOARD_START_Y + self.game.min_r * GRID_SIZE
+                y_end = BOARD_START_Y + self.game.max_r * GRID_SIZE
+                pygame.draw.line(self.screen, ACTIVE_COLOR, [x, y_start],
+                                 [x, y_end], 2)
+        # draw pieces
+        for r in range(GRID_COUNT):
+            for c in range(GRID_COUNT):
+                player = self.game.grid[r][c]
+                if player != EMPTY:
+                    piece_color = BLACK_COLOR if player == BLACK else WHITE_COLOR
+                    x = BOARD_START_X + c * GRID_SIZE
+                    y = BOARD_START_Y + r * GRID_SIZE
+                    specs = [(0, RADIUS, piece_color)]
+                    for width, radius, color in specs:
+                        pygame.draw.circle(self.screen, color, [x, y], radius, width)
+        # draw the winning line of five pieces
+        if self.game.game_over:
+            win_start, win_end = self.game.winning_pos
+            start_pos = [BOARD_START_X + win_start[1] * GRID_SIZE,
+                         BOARD_START_Y + win_start[0] * GRID_SIZE]
+            end_pos = [BOARD_START_X + win_end[1] * GRID_SIZE,
+                       BOARD_START_Y + win_end[0] * GRID_SIZE]
+            pygame.draw.line(self.screen, (0, 200, 0), start_pos, end_pos, 6)
 
-        QV = self.font.render('Current stats\'s Q values ([Hit, Stand], #samples): ([{:f},{:f}], {})'.format(
-            self.agent.Q_values[self.game.state][0],
-            self.agent.Q_values[self.game.state][1],
-            self.agent.N_Q[self.game.state],
-        ) , 1, BLACK)
-        
-        self.screen.blit(self.background, (0, 0))
-        self.screen.blit(self.hitTxt, (37, OPS_TXT_Y))
-        self.screen.blit(self.standTxt, (113, OPS_TXT_Y))
-        self.screen.blit(self.MCTxt[self.autoMC], (190, OPS_TXT_Y))
-        self.screen.blit(self.TDTxt[self.autoTD], (277, OPS_TXT_Y))
-        self.screen.blit(self.QLTxt[self.autoQL], (359, OPS_TXT_Y))
-        self.screen.blit(self.playTxt[self.autoPlay], (444, OPS_TXT_Y))
-        self.screen.blit(self.ops_instr, (OPS_INSTR_X, OPS_INSTR_Y))
-
-        for width, color in [(0, WHITE), (2, BLACK)]:
-            pygame.draw.rect(self.screen, color,
-                (10, 170, 600, 95), width)
-        self.screen.blit(state_info, (20, 180))
-        self.screen.blit(MCU, (20, 200))
-        self.screen.blit(TDU, (20, 220))
-        self.screen.blit(QV, (20, 240))
-
-        self.screen.blit(winTxt, (520, 23))
-        self.screen.blit(loseTxt, (520, 48))
-        self.screen.blit(win_rate_txt, (520, 73))
-
-        self.screen.blit(self.save_instr, (350, 380))
-        self.screen.blit(self.load_instr, (350, 400))
-
-        for i, card in enumerate(self.game.userCard):
-            x = 10 + i * 20
-            self.screen.blit(self.card_imgs[card], (x, USR_CARD_HEIGHT))
-        
-        if self.game.game_over() or self.game.stand:
-            if self.game.state == WIN_STATE:
-                result_txt = self.gameoverTxt[0]
-            else:
-                result_txt = self.gameoverTxt[1]
-            self.draw_label_hl(self.screen, GAME_OVER_TEXT_POS, result_txt)
-            self.screen.blit(result_txt, GAME_OVER_TEXT_POS)
-            for i, card in enumerate(self.game.dealCard):
-                x = 10 + i * 20
-                self.screen.blit(self.card_imgs[card], (x, 10))
+        if self.ai_play:
+            self.screen.blit(self.font.render("AI Calculating...", True, (0, 0, 0)), TEXT_POS)                        
+        elif self.game.game_over:
+            self.screen.blit(self.font.render("{0} has won. Press [space] to restart".format("Black" if self.game.winner == 'b' else "White"), True, (0, 0, 0)), TEXT_POS)
+        elif self.auto:
+            self.screen.blit(self.font.render("rand/AI play.", True, (0, 0, 0)), TEXT_POS)                        
+        elif self.semiauto:
+            self.screen.blit(self.font.render(HELP_TEXT.format("User vs AI.", "user"), True, (0, 0, 0)), TEXT_POS)
         else:
-            self.screen.blit(self.card_imgs[self.game.dealCard[0]], (10, 10))
-            self.screen.blit(self.cBack, (30, 10))
-
+            MANUAL_TEXT = "{0} Click to place piece. Press [m] to stop manual play."
+            self.screen.blit(self.font.render(MANUAL_TEXT.format("Next to play: {0}.".format("Black" if self.game.player == BLACK else "White"), "AI"), True, (0, 0, 0)), TEXT_POS)
         pygame.display.update()
 
+    def handle_key_event(self, e):
+        #left-up corner coordinate
+        origin_x = BOARD_START_X - EDGE_SIZE
+        origin_y = BOARD_START_Y - EDGE_SIZE
+        size = (GRID_COUNT - 1) * GRID_SIZE + EDGE_SIZE * 2
+        pos = e.pos
+        #Check the coordinates are in valid range
+        if origin_x <= pos[0] <= origin_x + size and origin_y <= pos[1] <= origin_y + size:
+            if not self.game.game_over:
+                x = pos[0] - origin_x
+                y = pos[1] - origin_y
+                r = int(y // GRID_SIZE)
+                c = int(x // GRID_SIZE)
+                return self.game.place(r, c)
 
-parser = argparse.ArgumentParser(description='Blackjack')
-parser.add_argument('--test', '-t', dest="test", type=int, default=0, \
-    help='1: test three steps (deterministic), \
-          2: test for divergence (100k steps, asymptotic), \
-          3: test for convergence (1 million steps, asymptotic)'
-)
-parser.add_argument('--algorithm', '-a', dest="algorithm", type=int, default=0, help='0: all, 1: MC, 2: TD, 3: Q-Learning')
+        return False
+
+parser = argparse.ArgumentParser(description='Gomoku')
+parser.add_argument('--test', '-t', dest="test", type=int, default=0, help='1: Test UCB values. 2: Test against random play.')
 args = parser.parse_args()
 
 if __name__ == '__main__':
     if args.test == 1:
-        test_three_steps(args.algorithm)
+        deterministic_test()
     elif args.test == 2:
-        test_divergence(args.algorithm)
-    elif args.test == 3:
-        test_convergence(args.algorithm)
+        win_test()
     else:
         import pygame
         from pygame.locals import *
-        ROTATIONS = {pygame.K_UP: 0, pygame.K_DOWN: 2, pygame.K_LEFT: 1, pygame.K_RIGHT: 3}
-        game = GameRunner()
-        game.loop()
+        game_runner = Gomoku()
+        game_runner.loop()

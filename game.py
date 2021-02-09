@@ -1,240 +1,172 @@
+# NOTE: do not modify this file
+from __future__ import print_function
 import copy
-import random
 
-HIT = 0
-STAND = 1
+GRID_COUNT = 11
 
-ranks = [
-    "ace",
-    "2",
-    "3",
-    "4",
-    "5",
-    "6",
-    "7",
-    "8",
-    "9",
-    "10",
-    "jack",
-    "queen",
-    "king",
-]
-suits = [
-    "clubs",
-    "spades",
-    "diamonds",
-    "hearts",
-]
+WHITE = 'w'
+BLACK = 'b'
+EMPTY = '.'
 
-cards = []
-for rank in ranks:
-    for suit in suits:
-        cards.append((rank, suit))
-
-'''
-    State representation: (user_sum, user_has_Ace, dealer_first)
-        - user_sum: sum of user's cards' value, where A counts as 1. Possible values are 2 to 20
-        - user_has_Ace: whether user has at least one Ace. Possible values are 0 and 1
-        - dealer_first: the first card's value of dealer, where A counts as 1. Possible values are 1 to 10
-        
-        - Special states: 
-            - WIN_STATE:    represented as (0,0,0)
-            - LOSE_STATE:   represented as (1,1,1)
-'''
-WIN_STATE = (0,0,0)
-LOSE_STATE = (1,0,0)
-
-states = []
-states.append(WIN_STATE)
-states.append(LOSE_STATE)
-for user_sum in range(2,21):
-    for user_A_active in range(0,2):
-        for dealer_first in range(1,11):
-            s = (user_sum, user_A_active, dealer_first)
-            states.append(s)
-
-                
-def get_amt(card):
-    rank, _ = card
-    if rank == "ace":
-        return 1
-    elif rank in ["jack", "queen", "king"]:
-        return 10
-    # else    
-    return int(rank)
+ROLLOUT_RNG_MAX = 1000;
 
 class Game:
-    def __init__(self):
-        self.winNum = 0
-        self.loseNum = 0
-        self.reset()
+    def __init__(self, player=BLACK, grid=None):
+        self.rollout_rng = 0
+        self.reset(player, grid)
 
-    def reset(self):
-        # Restart the game
-        self.userCard = []
-        self.dealCard = []
-        self.stand = False
-        self.init_cards(self.userCard, self.dealCard)
+    # resets the board to the specified state;
+    # randomly initalizes if no state provided
+    def reset(self, player=BLACK, init_grid=None):
+        self.winning_pos = None
+        self.winner = None
+        self.game_over = False
+        self.player = player
+        self.actions = []
+        self.maxrc = (len(init_grid) - 1) if init_grid is not None else (GRID_COUNT - 1)
+        self.max_r = self.max_c = self.min_r = self.min_c = (self.maxrc)//2
+
+        if init_grid is not None:
+            self.grid = copy.deepcopy(init_grid)
+            self.populate(False)
+        else:
+            self.grid = self.new_grid(GRID_COUNT)
+            self.populate()
+            self.place(*(self.get_actions()[0]))
+            self.place(*self.rand_move())
+
+    def reset_maxes(self, r, c, in_reset=True):
+        old_max_r = self.max_r
+        old_min_r = self.min_r
+        old_max_c = self.max_c
+        old_min_c = self.min_c
+
+        self.max_r = min(self.maxrc, max(self.max_r, r + 1))
+        self.max_c = min(self.maxrc, max(self.max_c, c + 1))
+        self.min_r = max(0, min(self.min_r, r - 1))
+        self.min_c = max(0, min(self.min_c, c - 1))
+
+        if in_reset:
+            new_rs = []
+            if (self.max_r != old_max_r):
+                new_rs.append(self.max_r)
+            if (self.min_r != old_min_r):
+                new_rs.append(self.min_r)
+
+            for new_r in new_rs:
+                for cp in range(self.min_c, self.max_c+1):
+                    self.actions.append((new_r, cp))
+                    
+            new_cs = []
+            if (self.max_c != old_max_c):
+                new_cs.append(self.max_c)
+            if (self.min_c != old_min_c):
+                new_cs.append(self.min_c)
+            for new_c in new_cs:
+                for rp in range(old_min_r, old_max_r+1):
+                    self.actions.append((rp, new_c))
+
+    def populate(self, in_reset=True):
+        for r in range(0, self.maxrc + 1):
+            for c in range(0, self.maxrc + 1):
+                if self.grid[r][c] != EMPTY:
+                    self.reset_maxes(r, c, in_reset)
+                    self.check_win(r, c)
+
+        for i in range(self.min_r, self.max_r+1):
+            for j in range(self.min_c, self.max_c+1):
+                if self.grid[i][j] == EMPTY:
+                    if (i, j) not in self.actions:
+                        self.actions.append((i,j))
+
+    # returns the current game state
+    def state(self):
+        return (self.player, self.grid)
+
+    def new_grid(self, grid_length):
+        new_grid = []
+        for i in range(grid_length):
+            new_grid.append(list("." * grid_length))
+        return new_grid
+
+    # places the current player's piece in the specified location
+    # and swaps players
+    def place(self, r, c):
+        if (r, c) in self.get_actions():
+            self.actions.remove((r, c))
+            self.grid[r][c] = self.player
+            self.reset_maxes(r, c, True)
+
+            self.check_win(r, c)
+            if len(self.get_actions()) == 0:
+                self.game_over = True
+                self.winner = WHITE
+
+            self.player = WHITE if self.player == BLACK else BLACK
+            return True
+        return False
+
+    def check_win(self, r, c):
+        runs = [ self.continuous_count_both(r, c, -1, 0),
+                 self.continuous_count_both(r, c, 0, 1),
+                 self.continuous_count_both(r, c, 1, 1),
+                 self.continuous_count_both(r, c, -1, 1) ]
         
-    def init_cards(self, uList, dList):
-        # Generates two cards for dealer and user, one at a time for each.
-        # Returns if card is Ace and the total amount of the cards per person.
-        user_A = 0
-        dealer_A = 0
+        max_run = max(runs, key=lambda x: x[1])
 
-        card_1, card_A = self.__gen_card(uList)
-        user_A += card_A
-        card_2, card_A = self.__gen_card(dList)
-        dealer_A += card_A
-        card_3, card_A = self.__gen_card(uList)
-        user_A += card_A
-        card_4, card_A = self.__gen_card(dList)
-        dealer_A += card_A
+        if max_run[1] >= 5:
+            self.winner = self.grid[r][c]
+            self.game_over = True
+            self.winning_pos = max_run[0]
 
-        # Sum of user's cards
-        self.user_sum = get_amt(card_1) + get_amt(card_3)
-        # Number of user's Aces
-        self.user_A = user_A
-        # Sum of dealer's cards (including hidden one)
-        self.__dealer_sum = get_amt(card_2) + get_amt(card_4)
-        # Number of all dealer's Aces (including hidden one)
-        self.__dealer_A = dealer_A
-        # The first card of dealer
-        self.dealer_first = get_amt(card_2)
+    def continuous_count_both(self, r, c, dr, dc):
+        start, start_count = self.continuous_count(r, c, dr, dc)
+        end, end_count = self.continuous_count(r, c, -dr, -dc)
+        return ((start, end), 1 + start_count + end_count)
 
-        # The state includes only information visible to the player
-        self.state = self.make_state()
+    def continuous_count(self, r, c, dr, dc):
+        start = (r, c)
+        player = self.grid[r][c]
+        result = 0
+        i = 1
+        while True:
+            new_r = r + dr * i
+            new_c = c + dc * i
+            if 0 <= new_r < GRID_COUNT and 0 <= new_c < GRID_COUNT:
+                if self.grid[new_r][new_c] == player:
+                    result += 1
+                    start = (new_r, new_c)
+                else:
+                    break
+            else:
+                break
+            i += 1
+        return start, result
 
-    def game_over(self):
-        return self.stand or self.state == WIN_STATE or self.state == LOSE_STATE
+    def get_actions(self):
+        return self.actions
 
-    @staticmethod
-    def __gen_card(xList):
-        # Generate and remove an card to append to xList.
-        # Return the card, and whether the card is an Ace
-        cA = 0
-        card = random.choice(cards)
-        xList.append(card)
-        if card[0] == 'ace':
-            cA = 1
-        return card, cA
+    # returns a randomly selected move from the set of possible actions
+    def rand_move(self):
+        self.rollout_rng = (self.rollout_rng + 1) % ROLLOUT_RNG_MAX
+        return self.get_actions()[(self.rollout_rng) % len(self.actions)]
 
-    def make_state(self):
-        # Calculate actual hands after counting A as 11 as needed
-        actual_user_sum, user_A_active = self.calculate_hand(self.user_sum, self.user_A)
-        actual_dealer_sum, _ = self.calculate_hand(self.__dealer_sum, self.__dealer_A)
+    def save_state(self, filename="savedata"):
+        f = open(filename, "w")
+        line = " ".join([str(self.grid[int(x / GRID_COUNT)][x % GRID_COUNT]) for x in range(0, GRID_COUNT**2)])
+        f.write(self.player + " " + line)
+        f.close()
 
-        # If user gets 21, user wins unless dealer also gets 21
-        if actual_user_sum == 21:
-            if actual_dealer_sum == 21:
-                return LOSE_STATE
-            return WIN_STATE
-        
-        # If user busts, user loses
-        if actual_user_sum > 21:
-            return LOSE_STATE
-        
-        # If user stands, check results
-        if self.stand:
-            # User wins if dealer busts or dealer gets smaller results
-            if actual_dealer_sum > 21 or actual_user_sum > actual_dealer_sum:
-                return WIN_STATE
-            return LOSE_STATE
+    def load_state_text(self, text):
+        split = text.split(' ')
+        player_to_go = str(split[0])
+        new_grid = self.new_grid(GRID_COUNT)
+        for i in range(0, GRID_COUNT**2):
+            new_grid[int(i / GRID_COUNT)][i % GRID_COUNT] = str(split[1+i])
+        self.reset(player_to_go, new_grid)
 
-        # Otherwise, return the state representation (see line 36 for explaination)
-        return (self.user_sum, user_A_active, self.dealer_first)
-
-    def act_hit(self):
-        # Give player a card
-        card, cA = self.__gen_card(self.userCard)
-        self.user_A += cA
-        self.user_sum += get_amt(card)
-        
-        # Make state based on the updated user cards
-        self.state = self.make_state()
-
-    @staticmethod
-    def calculate_hand(card_sum, card_A):
-        A_active = 0
-        if card_A and card_sum + 10 <= 21:
-            A_active = 1
-        
-        actual_sum = card_sum + A_active * 10
-        return actual_sum, A_active
-
-    def act_stand(self):
-        # H17 rule: if dealer's cards contain A's, there is always one A that's counted as 11
-        actual_dealer_sum, _ = self.calculate_hand(self.__dealer_sum, self.__dealer_A)
-        actual_user_sum, _ = self.calculate_hand(self.user_sum, self.user_A)
-
-        if actual_dealer_sum != 21:
-            # Dealer stops when it reaches 17 or it reaches user's card value
-            while actual_dealer_sum < actual_user_sum and actual_dealer_sum < 17:
-                card, cA = self.__gen_card(self.dealCard)
-                self.__dealer_A += cA
-                self.__dealer_sum += get_amt(card)
-                actual_dealer_sum, _ = self.calculate_hand(self.__dealer_sum, self.__dealer_A)
-        
-        # Make state based on the updated cards
-        self.stand = True
-        self.state = self.make_state()
-    
-    def update_stats(self):
-        if self.state == WIN_STATE:
-            self.winNum += 1
-        elif self.state == LOSE_STATE:
-            self.loseNum += 1
-    
-    def check_reward(self):
-        if not self.game_over():
-            return 0
-        if self.state == WIN_STATE:
-            return 1       
-        return -1
-    
-    def simulate_sequence(self, policy):
-        """
-        Simulate a sequence based on the passed in policy
-
-        :param policy:  the policy function that gives an action based on user's sum 
-        :return:        a sequence of states from the original state to terminal
-        """
-        episode = []
-
-        while not self.game_over():
-            # Add the current state to episode
-            episode.append((self.state, self.check_reward()))
-
-            # Pick an action based on policy
-            action = policy(self.state)
-
-            # Perform action
-            if action == HIT:
-                self.act_hit()
-            elif action == STAND:
-                self.act_stand()
-        
-        # Add the terminal state
-        episode.append((self.state, self.check_reward()))
-
-        return episode
-
-    def simulate_one_step(self, action):
-        """
-        Simulate one step based on the passed in action
-
-        :param action: the action to take at the current state
-        :return: a sequence of states from the original state to terminal
-        """
-
-        # If the current state is already terminal, return None
-        if self.game_over():
-            return None, self.check_reward()
-        
-        # Perform action based on the parameter
-        if action == HIT:
-            self.act_hit()
-        elif action == STAND:
-            self.act_stand()
-        
-        return self.state, self.check_reward()
+    def load_state(self, filename="savedata"):
+        f = open(filename, "r")
+        line = f.readline()
+        self.load_state_text(line)
+        f.close()

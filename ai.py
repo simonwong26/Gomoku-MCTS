@@ -1,194 +1,148 @@
+from __future__ import absolute_import, division, print_function
+from math import sqrt, log
+from game import Game, WHITE, BLACK, EMPTY
 import copy
+import time
 import random
 
-from game import Game, states
+class Node:
+    # NOTE: modifying this block is not recommended
+    def __init__(self, state, actions, parent=None):
+        self.state = (state[0], copy.deepcopy(state[1]))
+        self.num_wins = 0 #number of wins at the node
+        self.num_visits = 0 #number of visits of the node
+        self.parent = parent #parent node of the current node
+        self.children = [] #store actions and children nodes in the tree as (action, node) tuples
+        self.untried_actions = copy.deepcopy(actions) #store actions that have not been tried
+        self.test = []
+# NOTE: deterministic_test() requires BUDGET = 1000
+#   You can try higher or lower values to see how the AI's strength changes
+BUDGET = 1000
 
-HIT = 0
-STAND = 1
-DISCOUNT = 0.95 #This is the gamma value for all value calculations
-
-class Agent:
-    def __init__(self):
-
-        # For MC values
-        self.MC_values = {} # Dictionary: Store the MC value of each state
-        self.S_MC = {}      # Dictionary: Store the sum of returns in each state
-        self.N_MC = {}      # Dictionary: Store the number of samples of each state
-        # MC_values should be equal to S_MC divided by N_MC on each state (important for passing tests)
-
-        # For TD values
-        self.TD_values = {}  # Dictionary storing the TD value of each state
-        self.N_TD = {}       # Dictionary: Store the number of samples of each state
-
-        # For Q-learning values
-        self.Q_values = {}   # Dictionary storing the Q-Learning value of each state and action
-        self.N_Q = {}        # Dictionary: Store the number of samples of each state
-
-        # Initialization of the values
-        for s in states:
-            self.MC_values[s] = 0
-            self.S_MC[s] = 0
-            self.N_MC[s] = 0
-            self.TD_values[s] = 0
-            self.N_TD[s] = 0
-            self.Q_values[s] = [0,0] # First element is the Q value of "Hit", second element is the Q value of "Stand"
-            self.N_Q[s] = 0
-        # NOTE: see the comment of `init_cards()` method in `game.py` for description of game state       
+class AI:
+    # NOTE: modifying this block is not recommended
+    def __init__(self, state):
         self.simulator = Game()
+        self.simulator.reset(*state) #using * to unpack the state tuple
+        self.root = Node(state, self.simulator.get_actions())
 
-    # NOTE: do not modify
-    # This is the policy for MC and TD learning. 
-    @staticmethod
-    def default_policy(state):
-        user_sum = state[0]
-        user_A_active = state[1]
-        actual_user_sum = user_sum + user_A_active * 10
-        if actual_user_sum < 14:
-            return 0
-        else:
-            return 1
+    def mcts_search(self):
+        #TODO: Main MCTS loop
 
-    # NOTE: do not modify
-    # This is the fixed learning rate for TD and Q learning. 
-    @staticmethod
-    def alpha(n):
-        return 10.0/(9 + n)
-    
-    def MC_run(self, num_simulation, tester=False):
-        # Perform num_simulation rounds of simulations in each cycle of the overall game loop
-        for simulation in range(num_simulation):
-            # Do not modify the following three lines
-            if tester:
-                self.tester_print(simulation, num_simulation, "MC")
-            self.simulator.reset()  # Restart the simulator
+        iters = 0
+        action_win_rates = {} #store the table of actions and their ucb values
 
-            # TODO: Remove the following dummy updates and implement MC-learning
-            # Note: Do not reset the simulator again in the rest of this simulation
-            # Hint: Simulate a full episode using "self.simulator.simulate_sequence(...)"
-            episode = self.simulator.simulate_sequence(self.default_policy)
-            # Hint: You need to compute reward-to-go for each state in the episode
-            # Useful variables:
-            #     - DISCOUNT
-            #     - self.MC_values     (read comments in self.__init__)
-            previous = 0
-            for s in reversed(episode):
-                #sub_episode = episode[episode.index(s):]
-                reward = s[1] + previous*DISCOUNT
-                previous = reward
-                #print(reward)
-                self.S_MC[s[0]] += reward
-                self.N_MC[s[0]] += 1
-                self.MC_values[s[0]] =  self.S_MC[s[0]]/self.N_MC[s[0]]
-    
-    def TD_run(self, num_simulation, tester=False):
-        #Perform num_simulation rounds of simulations in each cycle of the overall game loop
-        for simulation in range(num_simulation):
-            # Do not modify the following three lines
-            if tester:
-                self.tester_print(simulation, num_simulation, "TD")
-            self.simulator.reset()
+        # TODO: Delete this block ->
+        #self.simulator.reset(*self.root.state)
+        #for action in self.simulator.get_actions():
+       #     action_win_rates[action] = 0
 
-            # TODO: Remove the following dummy updates and implement TD-learning
-            # Note: Do not reset the simulator again in the rest of this simulation
-            # Hint: You need a loop that takes one step simulation each time, until state is "None" which indicates termination
-            while self.simulator.state is not None:
-            # Hint: current state can be accessed by "self.simulator.state"
-            # Hint: Simulate one step using "self.simulator.simulate_one_step(...)"
-            # Hint: The learning rate alpha is given by "self.alpha(...)"
-            # Useful variables:
-            #     - DISCOUNT
-            #     - self.TD_values  (read comments in self.__init__)
-                s = self.simulator.state
-                reward = self.simulator.check_reward()
-                next_s, _ = self.simulator.simulate_one_step(self.default_policy(s))
-                self.N_TD[s] += 1
-                if next_s is not None:
-                	self.TD_values[s] = self.TD_values[s] + self.alpha(self.N_TD[s])*(reward+DISCOUNT*self.TD_values[next_s]-self.TD_values[s])
-                else:
-                	self.TD_values[s] = self.TD_values[s] + self.alpha(self.N_TD[s])*(reward-self.TD_values[s])
-                self.simulator.state = next_s
+        #node = Node(self.root.state, self.simulator.get_actions(), self.root)
+        #print(node.parent)
+        #return random.choice(self.simulator.get_actions()), action_win_rates
+        # <- Delete this block
 
-    def Q_run(self, num_simulation, tester=False):
-        #Perform num_simulation rounds of simulations in each cycle of the overall game loop
-        for simulation in range(num_simulation):
-            # Do not modify the following three lines
-            if tester:
-                self.tester_print(simulation, num_simulation, "Q")
-            self.simulator.reset()
+        # TODO: Implement the MCTS Loop
+        while(iters < BUDGET):
+            if ((iters + 1) % 100 == 0):
+                # NOTE: if your terminal driver doesn't support carriage returns
+                #   you can use: print("{}/{}".format(iters + 1, BUDGET))
+                print("\riters/budget: {}/{}".format(iters + 1, BUDGET), end="")
 
-            # TODO: Remove the following dummy update and implement Q-learning
-            # Note: Do not reset the simulator again in the rest of this simulation
-            # Hint: You need a loop that takes one step simulation each time, until state is "None" which indicates termination
-            while self.simulator.state is not None:
-            # Hint: current state can be accessed by "self.simulator.state"
-            # Hint: Simulate one step using "self.simulator.simulate_one_step(...)"
-            # Hint: The learning rate alpha is given by "self.alpha(...)"
-            # Hint: Implement epsilon-greedy method in "self.pick_action(...)"
-            # Useful variables:
-            #     - DISCOUNT
-            #     - self.Q_values  (read comments in self.__init__)
-                s = self.simulator.state
-                a = self.pick_action(s, 0.4)
-                reward = self.simulator.check_reward()
-                next_s, _ = self.simulator.simulate_one_step(a)
-                self.N_Q[s] += 1
-                if next_s is not None:
-                	self.Q_values[s][a] = self.Q_values[s][a]+self.alpha(self.N_Q[s])*(reward+DISCOUNT*max(self.Q_values[next_s][0], self.Q_values[next_s][1])-self.Q_values[s][a])
-                else:
-                	self.Q_values[s][a] = self.Q_values[s][a]+self.alpha(self.N_Q[s])*(reward-self.Q_values[s][a])
-                self.simulator.state = next_s
+            # TODO: select a node, rollout, and backpropagate
+            node = self.select(self.root)
+            result = self.rollout(node)
+            self.backpropagate(node, result)
 
-    def pick_action(self, s, epsilon):
-        # Replace the following random return value with the epsilon-greedy strategy
-        # Hint: Generate a random number with `random.random()` and compare with epsilon
-        # Hint: A random action is just `random.randint(0,1)`
-        if random.random() < epsilon:
-            return random.randint(0, 1)
-        if self.Q_values[s][0] > self.Q_values[s][1]:
-        	return 0
-        return 1
+            iters += 1
+        print()
 
+        # Note: Return the best action, and the table of actions and their win values 
+        #   For that we simply need to use best_child and set c=0 as return values
+        _, action, action_win_rates = self.best_child(self.root, 0)
+        return action, action_win_rates
 
-    #Note: do not modify
-    def autoplay_decision(self, state):
-        hitQ, standQ = self.Q_values[state][HIT], self.Q_values[state][STAND]
-        if hitQ > standQ:
-            return HIT
-        if standQ > hitQ:
-            return STAND
-        return HIT #Before Q-learning takes effect, just always HIT
+    def select(self, node):
+        # TODO: select a child node
 
-    # NOTE: do not modify
-    def save(self, filename):
-        with open(filename, "w") as file:
-            for table in [self.MC_values, self.TD_values, self.Q_values, self.S_MC, self.N_MC, self.N_TD, self.N_Q]:
-                for key in table:
-                    key_str = str(key).replace(" ", "")
-                    entry_str = str(table[key]).replace(" ", "")
-                    file.write(f"{key_str} {entry_str}\n")
-                file.write("\n")
+        # while node is not None: #As explained in Slack, ignore this line and follow pseudocode
+        # NOTE: deterministic_test() requires using c=1 for best_child()
+        #
+        self.simulator.reset(*node.state)
+        while self.simulator.game_over is not True:
+            if len(node.untried_actions)>0:
+                return self.expand(node)
+            else:
+                node,_,_ = self.best_child(node,1)
+                self.simulator.reset(*node.state)
+        return node
 
-    # NOTE: do not modify
-    def load(self, filename):
-        with open(filename) as file:
-            text = file.read()
-            MC_values_text, TD_values_text, Q_values_text, S_MC_text, N_MC_text, NTD_text, NQ_text, _  = text.split("\n\n")
-            
-            def extract_key(key_str):
-                return tuple([int(x) for x in key_str[1:-1].split(",")])
-            
-            for table, text in zip(
-                [self.MC_values, self.TD_values, self.Q_values, self.S_MC, self.N_MC, self.N_TD, self.N_Q], 
-                [MC_values_text, TD_values_text, Q_values_text, S_MC_text, N_MC_text, NTD_text, NQ_text]
-            ):
-                for line in text.split("\n"):
-                    key_str, entry_str = line.split(" ")
-                    key = extract_key(key_str)
-                    table[key] = eval(entry_str)
+    def expand(self, node):
+        # TODO: add a new child node from an untried action and return this new node
 
-    # NOTE: do not modify
-    @staticmethod
-    def tester_print(i, n, name):
-        print(f"\r  {name} {i + 1}/{n}", end="")
-        if i == n - 1:
-            print()
+        child_node = None #choose a child node to grow the search tree
+
+        # IMPORTANT: use the following method to fetch the next untried action
+        #   so that the order of action expansion is consistent with the test cases
+        action = node.untried_actions.pop(0)
+
+        # NOTE: Make sure to add the new node to the node.children
+        # NOTE: You may find the following methods useful:
+        #   self.simulator.state()
+        #   self.simulator.get_actions()
+        self.simulator.reset(*node.state)
+        self.simulator.place(*action)
+        child_node = Node(self.simulator.state(), self.simulator.get_actions(), node)
+        node.children.append((action, child_node))
+        return child_node
+
+    def best_child(self, node, c): 
+        # TODO: determine the best child and action by applying the UCB formula
+
+        best_child_node = None #store the best child node with UCB
+        best_action = None #store the action that leads to the best child
+        action_ucb_table = {} #store the UCB values of each child node (for testing)
+        best_ucb = -1
+        for child_node in node.children:
+            ucb = child_node[1].num_wins/child_node[1].num_visits+c*sqrt(2*log(node.num_visits)/child_node[1].num_visits)
+            if (ucb > best_ucb):
+                best_child_node = child_node[1]
+                best_action = child_node[0]
+                best_ucb = ucb
+            action_ucb_table[child_node[0]] = ucb
+        return best_child_node, best_action, action_ucb_table
+
+    def backpropagate(self, node, result):
+        while (node is not None):
+            # TODO: backpropagate the information about winner
+            # IMPORTANT: each node should store the number of wins for the player of its **parent** node
+            node.num_visits = node.num_visits+1
+            if node.parent is not None:
+                node.num_wins = node.num_wins+result[node.parent.state[0]]
+            else:
+                node.num_wins = node.num_wins+result[WHITE]
+            node = node.parent
+
+    def rollout(self, node):
+        # TODO: rollout (called DefaultPolicy in the slides)
+
+        # NOTE: you may find the following methods useful:
+        #   self.simulator.reset(*node.state)
+        #   self.simulator.game_over
+        #   self.simulator.rand_move()
+        #   self.simulator.place(r, c)
+
+        self.simulator.reset(*node.state)
+        while self.simulator.game_over is not True:
+            action = self.simulator.rand_move()
+            self.simulator.place(*action)
+
+        # Determine reward indicator from result of rollout
+        reward = {}
+        if self.simulator.winner == BLACK:
+            reward[BLACK] = 1
+            reward[WHITE] = 0
+        elif self.simulator.winner == WHITE:
+            reward[BLACK] = 0
+            reward[WHITE] = 1
+        return reward
